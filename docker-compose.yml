@@ -1,0 +1,87 @@
+version: '3.8'
+
+services:
+  # PostgreSQL Database
+  postgres:
+    image: postgres:15-alpine
+    container_name: mendix_db
+    environment:
+      POSTGRES_DB: employee_db
+      POSTGRES_USER: mendix_user
+      POSTGRES_PASSWORD: mendix_password_2025
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U mendix_user -d employee_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - mendix_network
+
+  # Python API Application
+  api:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: mendix_api
+    environment:
+      # Mendix API Configuration
+      MENDIX_API_BASE_URL: http://host.docker.internal:8080/rest/employeeservice/v1
+      MENDIX_API_USERNAME: sunil@lowcodelabs.in
+      MENDIX_API_PASSWORD: Lowcode@2025
+      
+      # OpenAI Configuration
+      OPENAI_API_KEY: ${OPENAI_API_KEY}
+      
+      # Database Configuration
+      DATABASE_URL: postgresql://mendix_user:mendix_password_2025@postgres:5432/employee_db
+      
+      # Scheduler Configuration
+      SYNC_INTERVAL_MINUTES: 5
+      
+      # API Configuration
+      API_HOST: 0.0.0.0
+      API_PORT: 8000
+      
+      # Logging
+      LOG_LEVEL: INFO
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - mendix_network
+    restart: unless-stopped
+    volumes:
+      - ./logs:/app/logs
+
+  # pgAdmin (Optional - for database management)
+  pgadmin:
+    image: dpage/pgadmin4:latest
+    container_name: mendix_pgadmin
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@lowcodelabs.in
+      PGADMIN_DEFAULT_PASSWORD: admin123
+      PGADMIN_CONFIG_SERVER_MODE: 'False'
+    ports:
+      - "5050:80"
+    depends_on:
+      - postgres
+    networks:
+      - mendix_network
+    restart: unless-stopped
+    profiles:
+      - admin
+
+volumes:
+  postgres_data:
+    driver: local
+
+networks:
+  mendix_network:
+    driver: bridge
