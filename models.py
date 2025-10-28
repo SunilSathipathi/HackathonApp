@@ -95,9 +95,32 @@ class Goal(Base):
     )
     assigned_to = relationship("Employee", foreign_keys=[assigned_to_employee_id])
     assigned_by = relationship("Employee", foreign_keys=[assigned_by_employee_id])
+    # One-to-one relationship with Form
+    form = relationship("Form", back_populates="goal", uselist=False)
     
     def __repr__(self):
         return f"<Goal(title='{self.title}', status='{self.status}')>"
+
+
+class Form(Base):
+    """Forms model representing form submissions tied to goals."""
+    __tablename__ = "forms"
+
+    id = Column(Integer, primary_key=True, index=True)
+    form_id = Column(String(50), unique=True, index=True, nullable=False)
+    # One-to-one with Goal via goal_id
+    goal_id = Column(String(50), ForeignKey("goals.goal_id"), nullable=False, unique=True)
+    form_created_on = Column(DateTime)
+    form_submitted_on = Column(DateTime)
+    form_status = Column(String(50), default="InProgress")
+    created_date = Column(DateTime, default=datetime.utcnow)
+    changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship back to goal
+    goal = relationship("Goal", back_populates="form")
+
+    def __repr__(self):
+        return f"<Form(form_id='{self.form_id}', status='{self.form_status}')>"
 
 
 class Project(Base):

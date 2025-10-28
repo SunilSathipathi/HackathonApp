@@ -99,6 +99,16 @@ class MendixAPIClient:
         except Exception as e:
             logger.warning(f"Error fetching goals (endpoint may not exist): {str(e)}")
             return []
+
+    def get_forms(self) -> List[Dict]:
+        """Fetch all forms tied to goals from Mendix API."""
+        try:
+            data = self._make_request("form")
+            logger.info(f"Successfully fetched {len(data) if data else 0} forms")
+            return data or []
+        except Exception as e:
+            logger.warning(f"Error fetching forms (endpoint may not exist): {str(e)}")
+            return []
     
     def get_projects(self) -> List[Dict]:
         """Fetch all projects from Mendix API."""

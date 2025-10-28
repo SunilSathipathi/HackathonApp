@@ -6,7 +6,7 @@ import logging
 from mendix_client import MendixAPIClient
 from models import (
     Employee, Department, Goal, Project, EmployeeProject,
-    Skill, EmployeeSkill, SyncLog
+    Skill, EmployeeSkill, SyncLog, Form
 )
 from config import settings
 
@@ -619,6 +619,88 @@ class SyncService:
             self.db.rollback()
             self._log_sync("skills", "failed", records_synced, str(e), start_time)
             return 0
+
+    def sync_forms(self) -> int:
+        """Sync forms tied to goals from Mendix API."""
+        start_time = datetime.utcnow()
+        records_synced = 0
+
+        try:
+            logger.info("Starting forms sync...")
+            forms_data = self.api_client.get_forms()
+
+            for form_data in forms_data:
+                try:
+                    raw_form_id = str(
+                        form_data.get("form_id")
+                        or form_data.get("FormID")
+                        or form_data.get("Id")
+                        or form_data.get("ID")
+                        or ""
+                    ).strip()
+
+                    goal_ref = form_data.get("Goal") or {}
+                    goal_id_val = str(goal_ref.get("Goal_Id") or "").strip()
+
+                    if not raw_form_id:
+                        key = f"{goal_id_val}|{form_data.get('FormCreatedOn') or ''}"
+                        raw_form_id = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+                    form = self.db.query(Form).filter(Form.form_id == raw_form_id).first()
+
+                    goal = self.db.query(Goal).filter(Goal.goal_id == goal_id_val).first()
+                    if not goal:
+                        logger.warning(f"Form {raw_form_id}: referenced goal_id '{goal_id_val}' not found, skipping")
+                        continue
+
+                    created_on = None
+                    submitted_on = None
+                    try:
+                        created_raw = form_data.get("FormCreatedOn")
+                        if created_raw:
+                            created_on = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+                    except Exception:
+                        created_on = None
+                    try:
+                        submitted_raw = form_data.get("FormSubmittedOn")
+                        if submitted_raw:
+                            submitted_on = datetime.fromisoformat(str(submitted_raw).replace("Z", "+00:00"))
+                    except Exception:
+                        submitted_on = None
+
+                    status = form_data.get("FormStatus") or "InProgress"
+
+                    if form:
+                        form.goal_id = goal.goal_id
+                        form.form_created_on = created_on
+                        form.form_submitted_on = submitted_on
+                        form.form_status = status
+                        form.changed_date = datetime.utcnow()
+                    else:
+                        form = Form(
+                            form_id=raw_form_id,
+                            goal_id=goal.goal_id,
+                            form_created_on=created_on,
+                            form_submitted_on=submitted_on,
+                            form_status=status,
+                        )
+                        self.db.add(form)
+
+                    records_synced += 1
+                except Exception as e:
+                    logger.error(f"Error processing form {form_data.get('form_id')}: {str(e)}")
+                    continue
+
+            self.db.commit()
+            logger.info(f"Successfully synced {records_synced} forms")
+            self._log_sync("forms", "success", records_synced, start_time=start_time)
+            return records_synced
+
+        except Exception as e:
+            logger.error(f"Error syncing forms: {str(e)}")
+            self.db.rollback()
+            self._log_sync("forms", "failed", records_synced, str(e), start_time)
+            return 0
     
     def sync_all(self) -> Dict[str, int]:
         """Sync all data from Mendix API."""
@@ -629,7 +711,8 @@ class SyncService:
             "departments": self.sync_departments(),
             "goals": self.sync_goals(),
             "projects": self.sync_projects(),
-            "skills": self.sync_skills()
+            "skills": self.sync_skills(),
+            "forms": self.sync_forms()
         }
         
         logger.info(f"Full synchronization completed: {results}")
