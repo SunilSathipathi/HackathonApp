@@ -190,7 +190,8 @@ class SyncService:
                 try:
                     # Robust goal_id resolution with deterministic fallback
                     raw_goal_id = str(
-                        goal_data.get("GoalID")
+                        goal_data.get("Goal_Id")
+                        or goal_data.get("GoalID")
                         or goal_data.get("GoalId")
                         or goal_data.get("Id")
                         or goal_data.get("ID")
