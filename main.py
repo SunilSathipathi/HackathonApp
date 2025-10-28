@@ -91,6 +91,9 @@ async def db_view_home():
     for table in table_names:
         html_content += f'<a href="/dbview/{table}">{table}</a>'
     
+    # Add custom UI link for Goal-Employee relationships
+    html_content += '<a href="/goals-employees">employee-goal</a>'
+
     html_content += """
         </div>
     </body>
