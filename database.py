@@ -1,4 +1,4 @@
-from sqlalchemy import create_engine
+from sqlalchemy import create_engine, inspect, text
 from sqlalchemy.orm import sessionmaker, Session
 from sqlalchemy.pool import StaticPool
 from config import settings
@@ -34,6 +34,20 @@ def init_db():
     """Initialize database - create all tables."""
     try:
         Base.metadata.create_all(bind=engine)
+        # Ensure new columns exist when running against an existing DB
+        try:
+            inspector = inspect(engine)
+            employee_columns = [c['name'] for c in inspector.get_columns('employees')]
+            if 'department_id' not in employee_columns:
+                with engine.connect() as conn:
+                    try:
+                        conn.execute(text("ALTER TABLE employees ADD COLUMN department_id VARCHAR(50)"))
+                        logger.info("Added employees.department_id column via migration")
+                    except Exception as e:
+                        # Column may already exist or DB may not support ALTER (should be rare)
+                        logger.warning(f"Could not add employees.department_id column: {e}")
+        except Exception as e:
+            logger.warning(f"Schema inspection failed during init: {e}")
         logger.info("Database tables created successfully")
     except Exception as e:
         logger.error(f"Error creating database tables: {e}")

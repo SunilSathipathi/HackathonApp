@@ -133,7 +133,15 @@ class SyncService:
             
             for dept_data in departments_data:
                 try:
-                    department_id = dept_data.get("DepartmentID", "").strip()
+                    # Support multiple key styles: DepartmentID or Department_id
+                    raw_dept_id = (
+                        dept_data.get("DepartmentID")
+                        or dept_data.get("Department_id")
+                        or dept_data.get("Id")
+                        or dept_data.get("ID")
+                        or ""
+                    )
+                    department_id = str(raw_dept_id).strip()
                     if not department_id:
                         continue
                     
@@ -141,19 +149,49 @@ class SyncService:
                         Department.department_id == department_id
                     ).first()
                     
+                    # Parse optional dates
+                    def parse_date(val):
+                        if not val:
+                            return None
+                        try:
+                            return datetime.fromisoformat(str(val).replace("Z", "+00:00"))
+                        except Exception:
+                            return None
+                    created_date = parse_date(dept_data.get("createdDate"))
+                    changed_date = parse_date(dept_data.get("changedDate"))
+
                     if department:
                         department.name = dept_data.get("Name", "")
                         department.description = dept_data.get("Description", "")
                         department.head_employee_id = dept_data.get("HeadEmployeeID", "")
-                        department.changed_date = datetime.utcnow()
+                        # Respect incoming changedDate if provided, else now
+                        department.changed_date = changed_date or datetime.utcnow()
+                        if created_date:
+                            department.created_date = created_date
                     else:
                         department = Department(
                             department_id=department_id,
                             name=dept_data.get("Name", ""),
                             description=dept_data.get("Description", ""),
-                            head_employee_id=dept_data.get("HeadEmployeeID", "")
+                            head_employee_id=dept_data.get("HeadEmployeeID", ""),
+                            created_date=created_date or datetime.utcnow(),
+                            changed_date=changed_date or datetime.utcnow(),
                         )
                         self.db.add(department)
+                        # Flush to ensure department exists before linking employees
+                        self.db.flush()
+                    
+                    # Many employees belong to this department
+                    employees_list = dept_data.get("Employees") or []
+                    for emp in employees_list:
+                        emp_id = (emp.get("EmployeeID") or "").strip()
+                        if not emp_id:
+                            continue
+                        employee = self.db.query(Employee).filter(Employee.employee_id == emp_id).first()
+                        if not employee:
+                            logger.warning(f"Employee '{emp_id}' not found when linking to department '{department_id}'")
+                            continue
+                        employee.department_id = department.department_id
                     
                     records_synced += 1
                     

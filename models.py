@@ -17,6 +17,8 @@ class Employee(Base):
     designation = Column(String(100))
     salary = Column(Float, default=0.0)
     manager_employee_id = Column(String(50), index=True)
+    # Many employees belong to one department via department_id (external unique key)
+    department_id = Column(String(50), ForeignKey("departments.department_id"), nullable=True)
     blocked = Column(Boolean, default=False)
     active = Column(Boolean, default=True)
     last_login = Column(DateTime, nullable=True)
@@ -26,6 +28,8 @@ class Employee(Base):
     # Relationships
     projects = relationship("EmployeeProject", back_populates="employee", cascade="all, delete-orphan")
     skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
+    # Link to Department (many-to-one)
+    department = relationship("Department", back_populates="employees")
     # Explicit goals relationship using the employee_id FK
     goals = relationship(
         "Goal",
@@ -50,6 +54,9 @@ class Department(Base):
     head_employee_id = Column(String(50), nullable=True)
     created_date = Column(DateTime, default=datetime.utcnow)
     changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+    
+    # Relationships
+    employees = relationship("Employee", back_populates="department")
     
     def __repr__(self):
         return f"<Department(name='{self.name}')>"

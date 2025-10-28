@@ -93,6 +93,8 @@ async def db_view_home():
     
     # Add custom UI link for Goal-Employee relationships
     html_content += '<a href="/goals-employees">employee-goal</a>'
+    # Add custom UI link for Employee-Department relationships
+    html_content += '<a href="/employees-departments">employee_department</a>'
 
     html_content += """
         </div>
@@ -685,6 +687,63 @@ async def goals_employees_view(db: Session = Depends(get_db)):
         
     except Exception as e:
         logger.error(f"Error displaying goal-employee relationships: {str(e)}")
+        return HTMLResponse(content=f"<h1>Error: {str(e)}</h1>", status_code=500)
+
+@app.get("/employees-departments", response_class=HTMLResponse, tags=["UI"])
+async def employees_departments_view(db: Session = Depends(get_db)):
+    """Display Employee-Department relationships in a simple UI."""
+    try:
+        employees = db.query(Employee).all()
+
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Employee-Department Relationships</title>
+            <style>
+                body { font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; margin: 20px; background-color: #f5f5f5; }
+                .container { max-width: 1000px; margin: 0 auto; background: #fff; padding: 20px; border-radius: 8px; box-shadow: 0 2px 10px rgba(0,0,0,0.1); }
+                h1 { color: #333; text-align: center; margin-bottom: 20px; border-bottom: 3px solid #28a745; padding-bottom: 10px; }
+                .back-link a { display: inline-block; padding: 8px 15px; background-color: #6c757d; color: white; text-decoration: none; border-radius: 5px; margin-bottom: 15px; }
+                .back-link a:hover { background-color: #5a6268; }
+                .list { display: grid; grid-template-columns: 1fr; gap: 12px; }
+                .card { border: 1px solid #e0e0e0; border-radius: 8px; padding: 12px; background-color: #fafafa; }
+                .emp-name { font-weight: 600; color: #222; }
+                .emp-info { color: #555; font-size: 0.95em; margin-top: 6px; }
+                .dept-tag { display: inline-block; padding: 4px 8px; background-color: #e9f7ef; color: #155724; border: 1px solid #c3e6cb; border-radius: 4px; font-size: 0.85em; margin-top: 8px; }
+                .empty { text-align: center; color: #666; font-style: italic; padding: 30px; }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="back-link"><a href="/dbview">← Back to Database Tables</a></div>
+                <h1>Employee-Department Relationships</h1>
+                <div class="list">
+        """
+
+        if not employees:
+            html_content += "<div class='empty'>No employees found.</div>"
+        else:
+            for emp in employees:
+                dept_name = emp.department.name if getattr(emp, "department", None) else "No department"
+                html_content += f"""
+                <div class="card">
+                    <div class="emp-name">👤 {emp.full_name}</div>
+                    <div class="emp-info">Employee ID: {emp.employee_id} | Email: {emp.email} | Designation: {emp.designation or 'Not specified'}</div>
+                    <div class="dept-tag">🏢 Department: {dept_name}</div>
+                </div>
+                """
+
+        html_content += """
+                </div>
+            </div>
+        </body>
+        </html>
+        """
+
+        return HTMLResponse(content=html_content)
+    except Exception as e:
+        logger.error(f"Error displaying employee-department relationships: {str(e)}")
         return HTMLResponse(content=f"<h1>Error: {str(e)}</h1>", status_code=500)
 
 
