@@ -328,7 +328,7 @@ async def health_check(db: Session = Depends(get_db)):
 async def get_statistics(db: Session = Depends(get_db)):
     """Get database statistics and record counts."""
     try:
-        from models import Employee, Department, Goal, Project, Skill, Form
+        from models import Employee, Department, Goal, Project, Skill, Form, Task
         
         stats = {
             "employees": {
@@ -349,6 +349,7 @@ async def get_statistics(db: Session = Depends(get_db)):
             },
             "skills": db.query(Skill).count(),
             "forms": db.query(Form).count(),
+            "tasks": db.query(Task).count(),
             "timestamp": datetime.utcnow().isoformat()
         }
         

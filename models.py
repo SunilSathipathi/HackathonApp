@@ -118,9 +118,35 @@ class Form(Base):
 
     # Relationship back to goal
     goal = relationship("Goal", back_populates="form")
+    tasks = relationship("Task", back_populates="form")
 
     def __repr__(self):
         return f"<Form(form_id='{self.form_id}', status='{self.form_status}')>"
+
+
+class Task(Base):
+    """Task model representing workflow tasks tied to a form."""
+    __tablename__ = "tasks"
+
+    id = Column(Integer, primary_key=True, index=True)
+    task_id = Column(String(50), unique=True, index=True, nullable=False)
+    # Many tasks belong to one form via form_id (external unique key)
+    form_id = Column(String(50), ForeignKey("forms.form_id"), nullable=False)
+
+    order = Column(Integer)
+    task_owner_email = Column(String(255))
+    task_owner_name = Column(String(255))
+    status = Column(String(50), default="Pending")
+    is_default_return_owner = Column(Boolean, default=False)
+
+    created_date = Column(DateTime, default=datetime.utcnow)
+    changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relationship back to form
+    form = relationship("Form", back_populates="tasks")
+
+    def __repr__(self):
+        return f"<Task(task_id='{self.task_id}', status='{self.status}')>"
 
 
 class Project(Base):

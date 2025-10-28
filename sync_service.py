@@ -6,7 +6,7 @@ import logging
 from mendix_client import MendixAPIClient
 from models import (
     Employee, Department, Goal, Project, EmployeeProject,
-    Skill, EmployeeSkill, SyncLog, Form
+    Skill, EmployeeSkill, SyncLog, Form, Task
 )
 from config import settings
 
@@ -701,6 +701,107 @@ class SyncService:
             self.db.rollback()
             self._log_sync("forms", "failed", records_synced, str(e), start_time)
             return 0
+
+    def sync_tasks(self) -> int:
+        """Sync tasks tied to forms from Mendix API."""
+        start_time = datetime.utcnow()
+        records_synced = 0
+
+        try:
+            logger.info("Starting tasks sync...")
+            tasks_data = self.api_client.get_tasks()
+
+            for task_data in tasks_data:
+                try:
+                    # External task ID resolution
+                    raw_task_id = str(
+                        task_data.get("Task_id")
+                        or task_data.get("TaskID")
+                        or task_data.get("Id")
+                        or task_data.get("ID")
+                        or ""
+                    ).strip()
+                    if not raw_task_id:
+                        # Build a fallback synthetic ID based on form_id and owner email
+                        form_ref = task_data.get("Form") or {}
+                        form_id_val = str(form_ref.get("form_id") or "").strip()
+                        key = f"{form_id_val}|{task_data.get('TaskOwnerEmail') or ''}|{task_data.get('Order') or ''}"
+                        raw_task_id = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
+
+                    # Resolve form reference (by external form_id)
+                    form_ref = task_data.get("Form") or {}
+                    form_id_val = str(form_ref.get("form_id") or "").strip()
+                    form = self.db.query(Form).filter(Form.form_id == form_id_val).first()
+                    if not form:
+                        logger.warning(f"Task {raw_task_id}: referenced form_id '{form_id_val}' not found, skipping")
+                        continue
+
+                    # Fetch or create task
+                    task = self.db.query(Task).filter(Task.task_id == raw_task_id).first()
+
+                    # Parse dates
+                    created_on = None
+                    changed_on = None
+                    try:
+                        created_raw = task_data.get("createdDate")
+                        if created_raw:
+                            created_on = datetime.fromisoformat(str(created_raw).replace("Z", "+00:00"))
+                    except Exception:
+                        created_on = None
+                    try:
+                        changed_raw = task_data.get("changedDate")
+                        if changed_raw:
+                            changed_on = datetime.fromisoformat(str(changed_raw).replace("Z", "+00:00"))
+                    except Exception:
+                        changed_on = None
+
+                    # Field mappings
+                    order_val = task_data.get("Order")
+                    owner_email = task_data.get("TaskOwnerEmail")
+                    owner_name = task_data.get("TaskOwnerName")
+                    status_val = task_data.get("Status") or "Pending"
+                    is_default = task_data.get("IsDefaultReturnOwner", False)
+
+                    if task:
+                        task.form_id = form.form_id
+                        task.order = order_val
+                        task.task_owner_email = owner_email
+                        task.task_owner_name = owner_name
+                        task.status = status_val
+                        task.is_default_return_owner = is_default
+                        # Update created/changed dates if provided
+                        if created_on:
+                            task.created_date = created_on
+                        task.changed_date = changed_on or datetime.utcnow()
+                    else:
+                        task = Task(
+                            task_id=raw_task_id,
+                            form_id=form.form_id,
+                            order=order_val,
+                            task_owner_email=owner_email,
+                            task_owner_name=owner_name,
+                            status=status_val,
+                            is_default_return_owner=is_default,
+                            created_date=created_on,
+                            changed_date=changed_on or datetime.utcnow(),
+                        )
+                        self.db.add(task)
+
+                    records_synced += 1
+                except Exception as e:
+                    logger.error(f"Error processing task {task_data.get('Task_id')}: {str(e)}")
+                    continue
+
+            self.db.commit()
+            logger.info(f"Successfully synced {records_synced} tasks")
+            self._log_sync("tasks", "success", records_synced, start_time=start_time)
+            return records_synced
+
+        except Exception as e:
+            logger.error(f"Error syncing tasks: {str(e)}")
+            self.db.rollback()
+            self._log_sync("tasks", "failed", records_synced, str(e), start_time)
+            return 0
     
     def sync_all(self) -> Dict[str, int]:
         """Sync all data from Mendix API."""
@@ -712,7 +813,8 @@ class SyncService:
             "goals": self.sync_goals(),
             "projects": self.sync_projects(),
             "skills": self.sync_skills(),
-            "forms": self.sync_forms()
+            "forms": self.sync_forms(),
+            "tasks": self.sync_tasks()
         }
         
         logger.info(f"Full synchronization completed: {results}")
