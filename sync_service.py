@@ -9,6 +9,7 @@ from models import (
     Skill, EmployeeSkill, SyncLog, Form, Task
 )
 from config import settings
+from vector_engine import VectorEngine
 
 logger = logging.getLogger(__name__)
 
@@ -854,6 +855,14 @@ class SyncService:
             "forms": self.sync_forms(),
             "tasks": self.sync_tasks()
         }
-        
+        # After sync, refresh semantic index if enabled
+        try:
+            if settings.enable_vector_search:
+                ve = VectorEngine()
+                upserted = ve.upsert_all(self.db)
+                logger.info(f"Vector embeddings refreshed: {upserted} documents")
+        except Exception as e:
+            logger.error(f"Error refreshing vector embeddings: {e}")
+
         logger.info(f"Full synchronization completed: {results}")
         return results

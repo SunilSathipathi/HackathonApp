@@ -11,7 +11,7 @@ from datetime import datetime
 
 from config import settings
 from database import get_db, init_db, engine
-from ai_service import AIQueryService
+from ai_service import AIQueryService, DynamicAIQueryService
 from sync_service import SyncService
 from scheduler import scheduler
 from models import SyncLog, Employee, Department, Goal, Project, EmployeeProject
@@ -95,6 +95,8 @@ async def db_view_home():
     html_content += '<a href="/goals-employees">employee-goal</a>'
     # Add custom UI link for Employee-Department relationships
     html_content += '<a href="/employees-departments">employee_department</a>'
+    # Add AI Query UI link
+    html_content += '<a href="/ask">ask-ai</a>'
 
     html_content += """
         </div>
@@ -102,6 +104,103 @@ async def db_view_home():
     </html>
     """
     return HTMLResponse(content=html_content)
+
+
+@app.get("/ask", response_class=HTMLResponse, tags=["AI Query UI"])
+async def ask_ui_page():
+    """Simple UI to enter a question and see AI answer via /query."""
+    html = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <meta charset="utf-8" />
+        <title>Ask AI</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 24px; }
+            h1 { color: #333; }
+            .container { max-width: 860px; }
+            .row { display: flex; gap: 10px; margin-bottom: 14px; }
+            input[type=text] { flex: 1; padding: 10px; font-size: 14px; }
+            button { padding: 10px 16px; font-size: 14px; cursor: pointer; }
+            .meta { margin-top: 10px; color: #555; }
+            .answer { white-space: pre-wrap; background: #f9f9f9; padding: 12px; border-radius: 6px; }
+            table { border-collapse: collapse; margin-top: 12px; width: 100%; }
+            th, td { border: 1px solid #ddd; padding: 8px; font-size: 13px; }
+            th { background: #f0f0f0; text-align: left; }
+            .error { color: #b00; margin-top: 10px; }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Ask AI</h1>
+            <div class="row">
+                <input id="question" type="text" placeholder="Type your question..." />
+                <button id="send">Send</button>
+            </div>
+            <div id="status" class="meta"></div>
+            <div id="meta" class="meta"></div>
+            <div id="answer" class="answer"></div>
+            <div id="preview"></div>
+            <div id="error" class="error"></div>
+        </div>
+        <script>
+        const qEl = document.getElementById('question');
+        const sendBtn = document.getElementById('send');
+        const statusEl = document.getElementById('status');
+        const metaEl = document.getElementById('meta');
+        const answerEl = document.getElementById('answer');
+        const previewEl = document.getElementById('preview');
+        const errorEl = document.getElementById('error');
+
+        async function ask() {
+            const question = (qEl.value || '').trim();
+            errorEl.textContent = '';
+            answerEl.textContent = '';
+            previewEl.innerHTML = '';
+            metaEl.textContent = '';
+            statusEl.textContent = 'Sending...';
+            if (!question) { statusEl.textContent = ''; errorEl.textContent = 'Please enter a question.'; return; }
+            try {
+                const res = await fetch('/query', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ question })
+                });
+                const data = await res.json();
+                statusEl.textContent = '';
+                if (!data.success) {
+                    errorEl.textContent = data.error || 'Query failed.';
+                    return;
+                }
+                answerEl.textContent = data.answer || '';
+                metaEl.textContent = `Type: ${data.query_type || ''}` + (data.query_used ? ` | Query: ${data.query_used}` : '');
+                const preview = data.data_preview;
+                if (Array.isArray(preview) && preview.length > 0) {
+                    const cols = Object.keys(preview[0]);
+                    let html = '<table><thead><tr>' + cols.map(c => `<th>${c}</th>`).join('') + '</tr></thead><tbody>';
+                    for (const row of preview) {
+                        html += '<tr>' + cols.map(c => `<td>${typeof row[c] === 'object' ? JSON.stringify(row[c]) : row[c]}</td>`).join('') + '</tr>';
+                    }
+                    html += '</tbody></table>';
+                    previewEl.innerHTML = html;
+                } else if (preview && typeof preview === 'object') {
+                    previewEl.innerHTML = '<pre>' + JSON.stringify(preview, null, 2) + '</pre>';
+                } else {
+                    previewEl.innerHTML = '';
+                }
+            } catch (e) {
+                statusEl.textContent = '';
+                errorEl.textContent = 'Error: ' + (e && e.message ? e.message : e);
+            }
+        }
+
+        sendBtn.addEventListener('click', ask);
+        qEl.addEventListener('keydown', (e) => { if (e.key === 'Enter') ask(); });
+        </script>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html)
 
 @app.get("/dbview/{table_name}", response_class=HTMLResponse)
 async def db_view_table(table_name: str, db: Session = Depends(get_db)):
@@ -179,6 +278,16 @@ class QuestionResponse(BaseModel):
     query_type: Optional[str] = None
     data_points: Optional[int] = None
     raw_data: Optional[Any] = None
+    error: Optional[str] = None
+
+
+class QueryResponse(BaseModel):
+    success: bool
+    question: str
+    answer: str
+    query_type: Optional[str] = None
+    query_used: Optional[str] = None
+    data_preview: Optional[Any] = None
     error: Optional[str] = None
 
 
@@ -274,6 +383,28 @@ async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Error processing question: {str(e)}"
+        )
+
+
+@app.post("/query", response_model=QueryResponse, tags=["AI Query"])
+async def dynamic_query(request: QuestionRequest, db: Session = Depends(get_db)):
+    """
+    Fully dynamic AI query endpoint.
+    - Introspects schema
+    - Routes to SQL and/or semantic search
+    - Generates parameterized SQL via GPT and executes
+    - Composes answer and returns preview and query used
+    """
+    try:
+        logger.info(f"Dynamic query received: {request.question}")
+        ai = DynamicAIQueryService(db)
+        result = ai.answer(request.question)
+        return QueryResponse(**result)
+    except Exception as e:
+        logger.error(f"Dynamic query error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error processing dynamic query: {str(e)}"
         )
 
 

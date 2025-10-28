@@ -252,3 +252,20 @@ class SyncLog(Base):
     
     def __repr__(self):
         return f"<SyncLog(sync_type='{self.sync_type}', status='{self.status}')>"
+
+
+class AIQueryLog(Base):
+    """Logs for AI-driven queries and answers."""
+    __tablename__ = "ai_query_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    question = Column(Text, nullable=False)
+    query_type = Column(String(20), nullable=False)  # sql, semantic, hybrid
+    sql = Column(Text, nullable=True)
+    parameters = Column(JSON, nullable=True)
+    result_count = Column(Integer, default=0)
+    answer = Column(Text, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    def __repr__(self):
+        return f"<AIQueryLog(type='{self.query_type}', question='{self.question[:30]}...')>"

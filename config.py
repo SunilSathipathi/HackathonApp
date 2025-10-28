@@ -12,9 +12,13 @@ class Settings(BaseSettings):
     
     # OpenAI Configuration
     openai_api_key: str
+    openai_model: str = "gpt-4o-mini"
+    openai_embedding_model: str = "text-embedding-3-small"
     
     # Database Configuration
     database_url: str = "sqlite:///./employee_data.db"
+    vector_db_path: str = "./vector_store"
+    enable_vector_search: bool = True
     
     # Scheduler Configuration
     sync_interval_minutes: int = 5
