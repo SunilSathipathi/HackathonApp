@@ -401,6 +401,290 @@ async def get_sync_history(limit: int = 20, db: Session = Depends(get_db)):
         )
 
 
+@app.get("/goals-employees", response_class=HTMLResponse, tags=["UI"])
+async def goals_employees_view(db: Session = Depends(get_db)):
+    """Display Goal-Employee relationships in a nice UI format."""
+    try:
+        # Query goals with their associated employees
+        goals_with_employees = db.query(Goal).join(Employee, Goal.employee_id == Employee.employee_id).all()
+        
+        # Create HTML content
+        html_content = """
+        <!DOCTYPE html>
+        <html>
+        <head>
+            <title>Goal-Employee Relationships</title>
+            <style>
+                body { 
+                    font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+                    margin: 20px; 
+                    line-height: 1.6; 
+                    background-color: #f5f5f5;
+                }
+                .container { 
+                    max-width: 1200px; 
+                    margin: 0 auto; 
+                    background-color: white; 
+                    padding: 20px; 
+                    border-radius: 8px; 
+                    box-shadow: 0 2px 10px rgba(0,0,0,0.1);
+                }
+                h1 { 
+                    color: #333; 
+                    text-align: center; 
+                    margin-bottom: 30px;
+                    border-bottom: 3px solid #007bff;
+                    padding-bottom: 10px;
+                }
+                .stats { 
+                    display: flex; 
+                    justify-content: space-around; 
+                    margin-bottom: 30px; 
+                    background-color: #f8f9fa; 
+                    padding: 15px; 
+                    border-radius: 5px;
+                }
+                .stat-item { 
+                    text-align: center; 
+                }
+                .stat-number { 
+                    font-size: 2em; 
+                    font-weight: bold; 
+                    color: #007bff; 
+                }
+                .stat-label { 
+                    color: #666; 
+                    font-size: 0.9em; 
+                }
+                .goal-card { 
+                    border: 1px solid #ddd; 
+                    margin-bottom: 20px; 
+                    padding: 20px; 
+                    border-radius: 8px; 
+                    background-color: #fff;
+                    box-shadow: 0 2px 5px rgba(0,0,0,0.05);
+                    transition: transform 0.2s;
+                }
+                .goal-card:hover { 
+                    transform: translateY(-2px); 
+                    box-shadow: 0 4px 15px rgba(0,0,0,0.1);
+                }
+                .goal-header { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    align-items: center; 
+                    margin-bottom: 15px;
+                    border-bottom: 1px solid #eee;
+                    padding-bottom: 10px;
+                }
+                .goal-title { 
+                    font-size: 1.2em; 
+                    font-weight: bold; 
+                    color: #333; 
+                    flex: 1;
+                }
+                .goal-status { 
+                    padding: 5px 12px; 
+                    border-radius: 20px; 
+                    font-size: 0.8em; 
+                    font-weight: bold; 
+                    text-transform: uppercase;
+                }
+                .status-pending { background-color: #fff3cd; color: #856404; }
+                .status-in-progress { background-color: #d1ecf1; color: #0c5460; }
+                .status-completed { background-color: #d4edda; color: #155724; }
+                .status-cancelled { background-color: #f8d7da; color: #721c24; }
+                .status-default { background-color: #e2e3e5; color: #383d41; }
+                .employee-info { 
+                    background-color: #f8f9fa; 
+                    padding: 15px; 
+                    border-radius: 5px; 
+                    margin-bottom: 15px;
+                }
+                .employee-name { 
+                    font-weight: bold; 
+                    color: #007bff; 
+                    font-size: 1.1em;
+                }
+                .employee-details { 
+                    color: #666; 
+                    font-size: 0.9em; 
+                    margin-top: 5px;
+                }
+                .goal-details { 
+                    display: grid; 
+                    grid-template-columns: 1fr 1fr; 
+                    gap: 15px; 
+                    margin-top: 15px;
+                }
+                .detail-item { 
+                    display: flex; 
+                    justify-content: space-between; 
+                    padding: 8px 0; 
+                    border-bottom: 1px solid #f0f0f0;
+                }
+                .detail-label { 
+                    font-weight: bold; 
+                    color: #555; 
+                }
+                .detail-value { 
+                    color: #333; 
+                }
+                .progress-bar { 
+                    width: 100%; 
+                    height: 20px; 
+                    background-color: #e9ecef; 
+                    border-radius: 10px; 
+                    overflow: hidden; 
+                    margin-top: 10px;
+                }
+                .progress-fill { 
+                    height: 100%; 
+                    background-color: #28a745; 
+                    transition: width 0.3s ease;
+                }
+                .back-link { 
+                    margin-bottom: 20px; 
+                    text-align: center;
+                }
+                .back-link a { 
+                    display: inline-block;
+                    padding: 10px 20px;
+                    background-color: #6c757d;
+                    color: white;
+                    text-decoration: none;
+                    border-radius: 5px;
+                    transition: background-color 0.3s;
+                }
+                .back-link a:hover { 
+                    background-color: #5a6268; 
+                }
+                .no-data { 
+                    text-align: center; 
+                    color: #666; 
+                    font-style: italic; 
+                    padding: 40px;
+                }
+            </style>
+        </head>
+        <body>
+            <div class="container">
+                <div class="back-link">
+                    <a href="/dbview">← Back to Database Tables</a>
+                </div>
+                <h1>Goal-Employee Relationships</h1>
+        """
+        
+        if not goals_with_employees:
+            html_content += """
+                <div class="no-data">
+                    <h3>No Goal-Employee relationships found</h3>
+                    <p>There are currently no goals assigned to employees in the database.</p>
+                </div>
+            """
+        else:
+            # Calculate statistics
+            total_goals = len(goals_with_employees)
+            status_counts = {}
+            for goal in goals_with_employees:
+                status = goal.status or "Unknown"
+                status_counts[status] = status_counts.get(status, 0) + 1
+            
+            # Add statistics section
+            html_content += f"""
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-number">{total_goals}</div>
+                        <div class="stat-label">Total Goals</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{status_counts.get('Completed', 0)}</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{status_counts.get('In Progress', 0)}</div>
+                        <div class="stat-label">In Progress</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-number">{status_counts.get('Pending', 0)}</div>
+                        <div class="stat-label">Pending</div>
+                    </div>
+                </div>
+            """
+            
+            # Add goal cards
+            for goal in goals_with_employees:
+                status = goal.status or "Unknown"
+                status_class = f"status-{status.lower().replace(' ', '-')}" if status.lower() in ['pending', 'in progress', 'completed', 'cancelled'] else "status-default"
+                
+                progress = goal.progress_percentage or 0
+                target_date = goal.target_date.strftime("%Y-%m-%d") if goal.target_date else "Not set"
+                start_date = goal.start_date.strftime("%Y-%m-%d") if goal.start_date else "Not set"
+                
+                html_content += f"""
+                <div class="goal-card">
+                    <div class="goal-header">
+                        <div class="goal-title">{goal.title or 'Untitled Goal'}</div>
+                        <div class="goal-status {status_class}">{status}</div>
+                    </div>
+                    
+                    <div class="employee-info">
+                        <div class="employee-name">👤 {goal.employee.full_name}</div>
+                        <div class="employee-details">
+                            Employee ID: {goal.employee.employee_id} | 
+                            Email: {goal.employee.email} | 
+                            Designation: {goal.employee.designation or 'Not specified'}
+                        </div>
+                    </div>
+                    
+                    <div class="goal-details">
+                        <div class="detail-item">
+                            <span class="detail-label">Goal ID:</span>
+                            <span class="detail-value">{goal.goal_id}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Priority:</span>
+                            <span class="detail-value">{goal.priority or 'Not set'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Category:</span>
+                            <span class="detail-value">{goal.category or 'Not specified'}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Start Date:</span>
+                            <span class="detail-value">{start_date}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Target Date:</span>
+                            <span class="detail-value">{target_date}</span>
+                        </div>
+                        <div class="detail-item">
+                            <span class="detail-label">Progress:</span>
+                            <span class="detail-value">{progress}%</span>
+                        </div>
+                    </div>
+                    
+                    <div class="progress-bar">
+                        <div class="progress-fill" style="width: {progress}%"></div>
+                    </div>
+                    
+                    {f'<div style="margin-top: 15px; padding: 10px; background-color: #f8f9fa; border-radius: 5px; font-style: italic; color: #666;">{goal.description}</div>' if goal.description else ''}
+                </div>
+                """
+        
+        html_content += """
+            </div>
+        </body>
+        </html>
+        """
+        
+        return HTMLResponse(content=html_content)
+        
+    except Exception as e:
+        logger.error(f"Error displaying goal-employee relationships: {str(e)}")
+        return HTMLResponse(content=f"<h1>Error: {str(e)}</h1>", status_code=500)
+
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(
