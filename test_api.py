@@ -241,6 +241,60 @@ def main():
     results.append(("Reporting by name: rammohan", test_dynamic_reporting_by_name("rammohan", expected_min=0)))
     results.append(("Reporting by name: sairam", test_dynamic_reporting_by_name("sairam", expected_min=1)))
     results.append(("Reporting by ID: LCL16110001", test_dynamic_reporting_by_id("LCL16110001", expected_min=1)))
+
+    # Goals assigned-by validation (Deeksha)
+    def test_goals_assigned_by_name(name: str, expected_min: int = 1):
+        console.print(f"\n[bold blue]Testing Goals assigned by: '{name}'[/bold blue]")
+        try:
+            response = requests.post(
+                f"{BASE_URL}/query",
+                json={"question": f"what goals assigned by {name}"},
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not data.get("success"):
+                console.print(f"✗ Goals query failed: {data.get('error')}", style="red")
+                return False
+            console.print("[bold green]Answer:[/bold green]" + f"\n{data.get('answer')}")
+            preview = data.get("data_preview") or {}
+            rows = preview.get("rows") if isinstance(preview, dict) else None
+            count = len(rows) if rows else 0
+            console.print(f"[dim]Query Used: {data.get('query_used')}[/dim]")
+            console.print(f"[dim]Rows: {count}[/dim]")
+            return count >= expected_min
+        except Exception as e:
+            console.print(f"✗ Goals assigned-by failed: {str(e)}", style="red")
+            return False
+
+    results.append(("Goals assigned by Deeksha", test_goals_assigned_by_name("deeksha", expected_min=1)))
+
+    # Goals assigned-by validation using employee ID (Deeksha: LCL16110090)
+    def test_goals_assigned_by_id(emp_id: str, expected_min: int = 1):
+        console.print(f"\n[bold blue]Testing Goals assigned by (ID): '{emp_id}'[/bold blue]")
+        try:
+            response = requests.post(
+                f"{BASE_URL}/query",
+                json={"question": f"what goals assigned by employee {emp_id}"},
+                timeout=20,
+            )
+            response.raise_for_status()
+            data = response.json()
+            if not data.get("success"):
+                console.print(f"✗ Goals-by-ID query failed: {data.get('error')}", style="red")
+                return False
+            console.print("[bold green]Answer:[/bold green]" + f"\n{data.get('answer')}")
+            preview = data.get("data_preview") or {}
+            rows = preview.get("rows") if isinstance(preview, dict) else None
+            count = len(rows) if rows else 0
+            console.print(f"[dim]Query Used: {data.get('query_used')}[/dim]")
+            console.print(f"[dim]Rows: {count}[/dim]")
+            return count >= expected_min
+        except Exception as e:
+            console.print(f"✗ Goals assigned-by (ID) failed: {str(e)}", style="red")
+            return False
+
+    results.append(("Goals assigned by ID LCL16110090", test_goals_assigned_by_id("LCL16110090", expected_min=1)))
     
     # Test some AI queries
    
