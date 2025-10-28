@@ -289,7 +289,7 @@ class SyncService:
                         goal.target_date = target_date
                         goal.start_date = start_date
                         # Support both legacy keys and new keys from payload
-                        goal.status = goal_data.get("Status") or goal_data.get("GoalStatus") or "Pending"
+                        goal.status = goal_data.get("Status") or goal_data.get("GoalStatus") or ""
                         goal.progress_percentage = goal_data.get("ProgressPercentage", 0.0)
                         goal.priority = priority_val
                         goal.category = goal_data.get("Category") or goal_data.get("GoalCategory") or ""
@@ -316,7 +316,7 @@ class SyncService:
                             description=description_text,
                             target_date=target_date,
                             start_date=start_date,
-                            status=goal_data.get("Status") or goal_data.get("GoalStatus") or "Pending",
+                            status=goal_data.get("Status") or goal_data.get("GoalStatus") or "",
                             progress_percentage=goal_data.get("ProgressPercentage", 0.0),
                             priority=priority_val,
                             category=goal_data.get("Category") or goal_data.get("GoalCategory") or "",
@@ -759,7 +759,7 @@ class SyncService:
                     order_val = task_data.get("Order")
                     owner_email = task_data.get("TaskOwnerEmail")
                     owner_name = task_data.get("TaskOwnerName")
-                    status_val = task_data.get("Status") or "Pending"
+                    status_val = task_data.get("Status") or ""
                     is_default = task_data.get("IsDefaultReturnOwner", False)
 
                     if task:

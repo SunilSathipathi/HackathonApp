@@ -69,7 +69,7 @@ class Goal(Base):
     description = Column(Text)
     target_date = Column(DateTime)
     start_date = Column(DateTime)
-    status = Column(String(50), default="Pending")  # Pending, In Progress, Completed, Cancelled
+    status = Column(String(50), default="")  # Pending, In Progress, Completed, Cancelled
     progress_percentage = Column(Float, default=0.0)
     priority = Column(String(20), default="Medium")  # Low, Medium, High
     category = Column(String(100))  # Performance, Development, etc.
@@ -136,7 +136,7 @@ class Task(Base):
     order = Column(Integer)
     task_owner_email = Column(String(255))
     task_owner_name = Column(String(255))
-    status = Column(String(50), default="Pending")
+    status = Column(String(50), default="")
     is_default_return_owner = Column(Boolean, default=False)
 
     created_date = Column(DateTime, default=datetime.utcnow)
