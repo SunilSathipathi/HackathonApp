@@ -1,12 +1,14 @@
 from sqlalchemy.orm import Session
 from datetime import datetime
-from typing import List, Dict
+from typing import List, Dict, Optional
+import hashlib
 import logging
 from mendix_client import MendixAPIClient
 from models import (
     Employee, Department, Goal, Project, EmployeeProject,
     Skill, EmployeeSkill, SyncLog
 )
+from config import settings
 
 logger = logging.getLogger(__name__)
 
@@ -178,46 +180,158 @@ class SyncService:
         try:
             logger.info("Starting goals sync...")
             goals_data = self.api_client.get_goals()
+            # Resolve the authenticated user's employee_id (used for fallbacks)
+            self_emp: Optional[Employee] = self.db.query(Employee).filter(
+                Employee.email == settings.mendix_api_username
+            ).first()
+            self_emp_id: Optional[str] = self_emp.employee_id if self_emp else None
             
             for goal_data in goals_data:
                 try:
-                    goal_id = goal_data.get("GoalID", "").strip()
-                    if not goal_id:
-                        continue
+                    # Robust goal_id resolution with deterministic fallback
+                    raw_goal_id = str(
+                        goal_data.get("GoalID")
+                        or goal_data.get("GoalId")
+                        or goal_data.get("Id")
+                        or goal_data.get("ID")
+                        or ""
+                    ).strip()
+                    if raw_goal_id:
+                        goal_id = raw_goal_id
+                    else:
+                        # Build a stable synthetic ID based on key fields
+                        title = (goal_data.get("Title") or "").strip()
+                        due_raw = goal_data.get("TargetDate") or goal_data.get("DueDate") or goal_data.get("EndDate") or ""
+                        owner_emp = (goal_data.get("EmployeeID") or self_emp_id or "").strip()
+                        key = f"{owner_emp}|{title}|{due_raw}"
+                        goal_id = hashlib.sha1(key.encode("utf-8")).hexdigest()[:16]
                     
                     goal = self.db.query(Goal).filter(Goal.goal_id == goal_id).first()
                     
-                    # Parse target date
+                    # Parse target/due date
                     target_date = None
-                    if goal_data.get("TargetDate"):
+                    iso_date = goal_data.get("TargetDate") or goal_data.get("DueDate") or None
+                    if iso_date:
                         try:
-                            target_date = datetime.fromisoformat(
-                                goal_data["TargetDate"].replace("Z", "+00:00")
-                            )
-                        except:
-                            pass
+                            target_date = datetime.fromisoformat(str(iso_date).replace("Z", "+00:00"))
+                        except Exception:
+                            target_date = None
+
+                    # Parse start date
+                    start_date = None
+                    start_iso = goal_data.get("StartDate") or None
+                    if start_iso:
+                        try:
+                            start_date = datetime.fromisoformat(str(start_iso).replace("Z", "+00:00"))
+                        except Exception:
+                            start_date = None
+
+                    # Parse assigned date
+                    assigned_date = None
+                    assigned_iso = goal_data.get("AssignedDate") or None
+                    if assigned_iso:
+                        try:
+                            assigned_date = datetime.fromisoformat(str(assigned_iso).replace("Z", "+00:00"))
+                        except Exception:
+                            assigned_date = None
+
+                    # Assigned-to / Assigned-by employee IDs from nested objects
+                    assigned_to_id = None
+                    assigned_by_id = None
+                    try:
+                        assigned_to = goal_data.get("GoalAssignedTo") or {}
+                        assigned_to_id = (assigned_to.get("EmployeeID") or "").strip() or None
+                    except Exception:
+                        assigned_to_id = None
+                    try:
+                        assigned_by = goal_data.get("GoalAssignedBy") or {}
+                        assigned_by_id = (assigned_by.get("EmployeeID") or "").strip() or None
+                    except Exception:
+                        assigned_by_id = None
+                    # Fallbacks using MySelf flag and authenticated user
+                    myself = goal_data.get("MySelf")
+                    if self_emp_id:
+                        if myself is True:
+                            assigned_to_id = assigned_to_id or self_emp_id
+                            assigned_by_id = assigned_by_id or self_emp_id
+                        elif myself is False:
+                            assigned_to_id = assigned_to_id or self_emp_id
                     
+                    # Resolve owner employee_id with fallback to authenticated user if missing
+                    owner_employee_id = (goal_data.get("EmployeeID") or "").strip() or self_emp_id or ""
+
+                    # Priority via weightage bucketing if provided
+                    weightage = goal_data.get("Weightage")
+                    priority_val = None
+                    try:
+                        if isinstance(weightage, (int, float)):
+                            if weightage >= 67:
+                                priority_val = "High"
+                            elif weightage <= 33:
+                                priority_val = "Low"
+                            else:
+                                priority_val = "Medium"
+                    except Exception:
+                        priority_val = None
+                    if not priority_val:
+                        priority_val = goal_data.get("Priority", "Medium")
+
+                    # Build description from Description field only
+                    description_text = (goal_data.get("Description") or "").strip()
+                    # Keep measurement criteria separate
+                    measurement_criteria = (goal_data.get("MeasurementCriteria") or "").strip()
+
                     if goal:
-                        goal.employee_id = goal_data.get("EmployeeID", "")
+                        goal.employee_id = owner_employee_id
                         goal.title = goal_data.get("Title", "")
-                        goal.description = goal_data.get("Description", "")
+                        goal.description = description_text
                         goal.target_date = target_date
-                        goal.status = goal_data.get("Status", "Pending")
+                        goal.start_date = start_date
+                        # Support both legacy keys and new keys from payload
+                        goal.status = goal_data.get("Status") or goal_data.get("GoalStatus") or "Pending"
                         goal.progress_percentage = goal_data.get("ProgressPercentage", 0.0)
-                        goal.priority = goal_data.get("Priority", "Medium")
-                        goal.category = goal_data.get("Category", "")
+                        goal.priority = priority_val
+                        goal.category = goal_data.get("Category") or goal_data.get("GoalCategory") or ""
+                        # New relationships
+                        goal.assigned_to_employee_id = assigned_to_id
+                        goal.assigned_by_employee_id = assigned_by_id
+                        # All new comprehensive fields
+                        goal.weightage = weightage
+                        goal.measurement_criteria = measurement_criteria
+                        goal.is_smart = goal_data.get("IsSMART", False)
+                        goal.progress = goal_data.get("Progress", 0)
+                        goal.assigned_date = assigned_date
+                        goal.myself_required = goal_data.get("MySelfRequired", False)
+                        goal.file_id = goal_data.get("FileID")
+                        goal.delete_after_download = goal_data.get("DeleteAfterDownload", False)
+                        goal.has_contents = goal_data.get("HasContents", False)
+                        goal.size = goal_data.get("Size", -1)
                         goal.changed_date = datetime.utcnow()
                     else:
                         goal = Goal(
                             goal_id=goal_id,
-                            employee_id=goal_data.get("EmployeeID", ""),
+                            employee_id=owner_employee_id or "",
                             title=goal_data.get("Title", ""),
-                            description=goal_data.get("Description", ""),
+                            description=description_text,
                             target_date=target_date,
-                            status=goal_data.get("Status", "Pending"),
+                            start_date=start_date,
+                            status=goal_data.get("Status") or goal_data.get("GoalStatus") or "Pending",
                             progress_percentage=goal_data.get("ProgressPercentage", 0.0),
-                            priority=goal_data.get("Priority", "Medium"),
-                            category=goal_data.get("Category", "")
+                            priority=priority_val,
+                            category=goal_data.get("Category") or goal_data.get("GoalCategory") or "",
+                            assigned_to_employee_id=assigned_to_id,
+                            assigned_by_employee_id=assigned_by_id,
+                            # All new comprehensive fields
+                            weightage=weightage,
+                            measurement_criteria=measurement_criteria,
+                            is_smart=goal_data.get("IsSMART", False),
+                            progress=goal_data.get("Progress", 0),
+                            assigned_date=assigned_date,
+                            myself_required=goal_data.get("MySelfRequired", False),
+                            file_id=goal_data.get("FileID"),
+                            delete_after_download=goal_data.get("DeleteAfterDownload", False),
+                            has_contents=goal_data.get("HasContents", False),
+                            size=goal_data.get("Size", -1)
                         )
                         self.db.add(goal)
                     
@@ -237,84 +351,175 @@ class SyncService:
             self.db.rollback()
             self._log_sync("goals", "failed", records_synced, str(e), start_time)
             return 0
-    
     def sync_projects(self) -> int:
         """Sync projects from Mendix API."""
         start_time = datetime.utcnow()
         records_synced = 0
-        
+
         try:
             logger.info("Starting projects sync...")
             projects_data = self.api_client.get_projects()
-            
+
             for proj_data in projects_data:
                 try:
-                    project_id = proj_data.get("ProjectID", "").strip()
+                    project_id = str(proj_data.get("ProjectID", "")).strip()
                     if not project_id:
                         continue
-                    
-                    project = self.db.query(Project).filter(
-                        Project.project_id == project_id
-                    ).first()
-                    
-                    # Parse dates
-                    start_date = None
-                    end_date = None
-                    
-                    if proj_data.get("StartDate"):
+
+                    project = self.db.query(Project).filter(Project.project_id == project_id).first()
+
+                    # Safe ISO date parser
+                    def parse_date(date_str):
                         try:
-                            start_date = datetime.fromisoformat(
-                                proj_data["StartDate"].replace("Z", "+00:00")
-                            )
-                        except:
-                            pass
-                    
-                    if proj_data.get("EndDate"):
-                        try:
-                            end_date = datetime.fromisoformat(
-                                proj_data["EndDate"].replace("Z", "+00:00")
-                            )
-                        except:
-                            pass
-                    
+                            return datetime.fromisoformat(date_str.replace("Z", "+00:00")) if date_str else None
+                        except Exception:
+                            return None
+
+                    start_date = parse_date(proj_data.get("StartDate"))
+                    end_date = parse_date(proj_data.get("EndDate"))
+                    created_date = parse_date(proj_data.get("createdDate"))
+                    changed_date = parse_date(proj_data.get("changedDate"))
+
+                    # Extract manager info (nested)
+                    manager_data = proj_data.get("Manager", {})
+                    manager_employee_id = manager_data.get("EmployeeID")
+
                     if project:
-                        project.name = proj_data.get("Name", "")
+                        project.name = proj_data.get("ProjectName", "")
+                        project.project_manager = proj_data.get("ProjectManager", "")
                         project.description = proj_data.get("Description", "")
-                        project.status = proj_data.get("Status", "Active")
+                        project.manager_employee_id = manager_employee_id
                         project.start_date = start_date
                         project.end_date = end_date
-                        project.client_name = proj_data.get("ClientName", "")
-                        project.project_type = proj_data.get("ProjectType", "")
-                        project.changed_date = datetime.utcnow()
+                        project.created_date = created_date
+                        project.changed_date = changed_date
                     else:
                         project = Project(
                             project_id=project_id,
-                            name=proj_data.get("Name", ""),
+                            name=proj_data.get("ProjectName", ""),
+                            project_manager=proj_data.get("ProjectManager", ""),
                             description=proj_data.get("Description", ""),
-                            status=proj_data.get("Status", "Active"),
+                            manager_employee_id=manager_employee_id,
                             start_date=start_date,
                             end_date=end_date,
-                            client_name=proj_data.get("ClientName", ""),
-                            project_type=proj_data.get("ProjectType", "")
+                            created_date=created_date,
+                            changed_date=changed_date,
                         )
                         self.db.add(project)
-                    
+
+                    # Commit once per project so we can safely create relations
+                    self.db.commit()
+
+                    # Handle Employees list (many-to-many)
+                    employee_links = proj_data.get("Employees", [])
+                    for emp in employee_links:
+                        emp_id = emp.get("EmployeeID")
+                        if emp_id:
+                            link_exists = self.db.query(EmployeeProject).filter_by(
+                                project_id=project.project_id,
+                                employee_id=emp_id
+                            ).first()
+                            if not link_exists:
+                                self.db.add(EmployeeProject(
+                                    project_id=project.project_id,
+                                    employee_id=emp_id
+                                ))
+
                     records_synced += 1
-                    
+
                 except Exception as e:
                     logger.error(f"Error processing project {proj_data.get('ProjectID')}: {str(e)}")
+                    self.db.rollback()
                     continue
-            
+
             self.db.commit()
             logger.info(f"Successfully synced {records_synced} projects")
             self._log_sync("projects", "success", records_synced, start_time=start_time)
             return records_synced
-            
+
         except Exception as e:
             logger.error(f"Error syncing projects: {str(e)}")
             self.db.rollback()
             self._log_sync("projects", "failed", records_synced, str(e), start_time)
             return 0
+
+    # def sync_projects(self) -> int:
+    #     """Sync projects from Mendix API."""
+    #     start_time = datetime.utcnow()
+    #     records_synced = 0
+        
+    #     try:
+    #         logger.info("Starting projects sync...")
+    #         projects_data = self.api_client.get_projects()
+            
+    #         for proj_data in projects_data:
+    #             try:
+    #                 project_id = proj_data.get("ProjectID", "").strip()
+    #                 if not project_id:
+    #                     continue
+                    
+    #                 project = self.db.query(Project).filter(
+    #                     Project.project_id == project_id
+    #                 ).first()
+                    
+    #                 # Parse dates
+    #                 start_date = None
+    #                 end_date = None
+                    
+    #                 if proj_data.get("StartDate"):
+    #                     try:
+    #                         start_date = datetime.fromisoformat(
+    #                             proj_data["StartDate"].replace("Z", "+00:00")
+    #                         )
+    #                     except:
+    #                         pass
+                    
+    #                 if proj_data.get("EndDate"):
+    #                     try:
+    #                         end_date = datetime.fromisoformat(
+    #                             proj_data["EndDate"].replace("Z", "+00:00")
+    #                         )
+    #                     except:
+    #                         pass
+                    
+    #                 if project:
+    #                     project.name = proj_data.get("Name", "")
+    #                     project.description = proj_data.get("Description", "")
+    #                     project.status = proj_data.get("Status", "Active")
+    #                     project.start_date = start_date
+    #                     project.end_date = end_date
+    #                     project.client_name = proj_data.get("ClientName", "")
+    #                     project.project_type = proj_data.get("ProjectType", "")
+    #                     project.changed_date = datetime.utcnow()
+    #                 else:
+    #                     project = Project(
+    #                         project_id=project_id,
+    #                         name=proj_data.get("Name", ""),
+    #                         description=proj_data.get("Description", ""),
+    #                         status=proj_data.get("Status", "Active"),
+    #                         start_date=start_date,
+    #                         end_date=end_date,
+    #                         client_name=proj_data.get("ClientName", ""),
+    #                         project_type=proj_data.get("ProjectType", "")
+    #                     )
+    #                     self.db.add(project)
+                    
+    #                 records_synced += 1
+                    
+    #             except Exception as e:
+    #                 logger.error(f"Error processing project {proj_data.get('ProjectID')}: {str(e)}")
+    #                 continue
+            
+    #         self.db.commit()
+    #         logger.info(f"Successfully synced {records_synced} projects")
+    #         self._log_sync("projects", "success", records_synced, start_time=start_time)
+    #         return records_synced
+            
+    #     except Exception as e:
+    #         logger.error(f"Error syncing projects: {str(e)}")
+    #         self.db.rollback()
+    #         self._log_sync("projects", "failed", records_synced, str(e), start_time)
+    #         return 0
     
     def sync_skills(self) -> int:
         """Sync skills from Mendix API."""

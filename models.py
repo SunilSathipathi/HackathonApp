@@ -24,9 +24,16 @@ class Employee(Base):
     changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationships
-    goals = relationship("Goal", back_populates="employee", cascade="all, delete-orphan")
     projects = relationship("EmployeeProject", back_populates="employee", cascade="all, delete-orphan")
     skills = relationship("EmployeeSkill", back_populates="employee", cascade="all, delete-orphan")
+    # Explicit goals relationship using the employee_id FK
+    goals = relationship(
+        "Goal",
+        back_populates="employee",
+        cascade="all, delete-orphan",
+        primaryjoin=lambda: Employee.employee_id == Goal.employee_id,
+        foreign_keys=lambda: [Goal.employee_id],
+    )
     
     def __repr__(self):
         return f"<Employee(employee_id='{self.employee_id}', name='{self.full_name}')>"
@@ -49,24 +56,45 @@ class Department(Base):
 
 
 class Goal(Base):
-    """Employee goals model."""
+    """Goals model."""
     __tablename__ = "goals"
     
     id = Column(Integer, primary_key=True, index=True)
     goal_id = Column(String(50), unique=True, index=True, nullable=False)
     employee_id = Column(String(50), ForeignKey("employees.employee_id"), nullable=False)
+    # Assignment relationships
+    assigned_to_employee_id = Column(String(50), ForeignKey("employees.employee_id"), nullable=True)
+    assigned_by_employee_id = Column(String(50), ForeignKey("employees.employee_id"), nullable=True)
     title = Column(String(500), nullable=False)
     description = Column(Text)
     target_date = Column(DateTime)
+    start_date = Column(DateTime)
     status = Column(String(50), default="Pending")  # Pending, In Progress, Completed, Cancelled
     progress_percentage = Column(Float, default=0.0)
     priority = Column(String(20), default="Medium")  # Low, Medium, High
     category = Column(String(100))  # Performance, Development, etc.
+    # Additional Mendix fields
+    weightage = Column(Integer)  # Original numeric weightage from Mendix
+    measurement_criteria = Column(Text)  # Separate field for measurement criteria
+    is_smart = Column(Boolean, default=False)  # IsSMART flag
+    progress = Column(Integer, default=0)  # Progress field (different from progress_percentage)
+    assigned_date = Column(DateTime)  # AssignedDate
+    myself_required = Column(Boolean, default=False)  # MySelfRequired flag
+    file_id = Column(Integer)  # FileID
+    delete_after_download = Column(Boolean, default=False)  # DeleteAfterDownload
+    has_contents = Column(Boolean, default=False)  # HasContents
+    size = Column(Integer, default=-1)  # Size
     created_date = Column(DateTime, default=datetime.utcnow)
     changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
     # Relationship
-    employee = relationship("Employee", back_populates="goals")
+    employee = relationship(
+        "Employee",
+        back_populates="goals",
+        foreign_keys=[employee_id],
+    )
+    assigned_to = relationship("Employee", foreign_keys=[assigned_to_employee_id])
+    assigned_by = relationship("Employee", foreign_keys=[assigned_by_employee_id])
     
     def __repr__(self):
         return f"<Goal(title='{self.title}', status='{self.status}')>"
@@ -78,13 +106,12 @@ class Project(Base):
     
     id = Column(Integer, primary_key=True, index=True)
     project_id = Column(String(50), unique=True, index=True, nullable=False)
-    name = Column(String(200), nullable=False)
+    name = Column(String(200), nullable=False)                  # maps to ProjectName
     description = Column(Text)
-    status = Column(String(50), default="Active")  # Active, On Hold, Completed, Cancelled
+    project_manager = Column(String(200))                       # maps to ProjectManager
+    manager_employee_id = Column(String(50))                    # nested Manager.EmployeeID
     start_date = Column(DateTime)
     end_date = Column(DateTime)
-    client_name = Column(String(200))
-    project_type = Column(String(100))
     created_date = Column(DateTime, default=datetime.utcnow)
     changed_date = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
     
@@ -92,8 +119,7 @@ class Project(Base):
     employees = relationship("EmployeeProject", back_populates="project", cascade="all, delete-orphan")
     
     def __repr__(self):
-        return f"<Project(name='{self.name}', status='{self.status}')>"
-
+        return f"<Project(name='{self.name}', manager='{self.project_manager}')>"
 
 class EmployeeProject(Base):
     """Many-to-many relationship between employees and projects."""

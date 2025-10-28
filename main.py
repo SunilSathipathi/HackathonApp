@@ -1,17 +1,20 @@
-from fastapi import FastAPI, Depends, HTTPException, status
+from fastapi import FastAPI, Depends, HTTPException, status, Request
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy.orm import Session
+from sqlalchemy import inspect, text
 from pydantic import BaseModel
-from typing import Optional, Dict, Any
+from typing import Optional, Dict, Any, List
 import logging
 from datetime import datetime
 
 from config import settings
-from database import get_db, init_db
+from database import get_db, init_db, engine
 from ai_service import AIQueryService
 from sync_service import SyncService
 from scheduler import scheduler
-from models import SyncLog
+from models import SyncLog, Employee, Department, Goal, Project, EmployeeProject
 
 # Configure logging
 logging.basicConfig(
@@ -40,6 +43,7 @@ app.add_middleware(
 # Pydantic models for request/response
 class QuestionRequest(BaseModel):
     question: str
+    context: Optional[Dict[str, Any]] = None
     
     class Config:
         json_schema_extra = {
@@ -47,6 +51,120 @@ class QuestionRequest(BaseModel):
                 "question": "How many employees work as Mendix Developers?"
             }
         }
+
+@app.get("/dbview", response_class=HTMLResponse)
+async def db_view_home():
+    """Home page for database viewer"""
+    # Get all table names from the database
+    inspector = inspect(engine)
+    table_names = inspector.get_table_names()
+    
+    # Create a simple HTML page with links to each table
+    html_content = """
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Database Viewer</title>
+        <style>
+            body { font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }
+            h1 { color: #333; }
+            .table-list { margin-bottom: 20px; }
+            .table-list a { 
+                display: inline-block; 
+                margin-right: 10px; 
+                margin-bottom: 10px;
+                padding: 8px 15px; 
+                background-color: #f0f0f0; 
+                color: #333; 
+                text-decoration: none; 
+                border-radius: 4px; 
+            }
+            .table-list a:hover { background-color: #ddd; }
+        </style>
+    </head>
+    <body>
+        <h1>Database Tables</h1>
+        <div class="table-list">
+    """
+    
+    # Add links for each table
+    for table in table_names:
+        html_content += f'<a href="/dbview/{table}">{table}</a>'
+    
+    html_content += """
+        </div>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=html_content)
+
+@app.get("/dbview/{table_name}", response_class=HTMLResponse)
+async def db_view_table(table_name: str, db: Session = Depends(get_db)):
+    """View data in a specific table"""
+    # Check if table exists
+    inspector = inspect(engine)
+    if table_name not in inspector.get_table_names():
+        return HTMLResponse(content=f"<h1>Table {table_name} not found</h1>")
+    
+    # Get table columns
+    columns = [column['name'] for column in inspector.get_columns(table_name)]
+    
+    # Query data from the table (SQLAlchemy 2.0 requires text())
+    result = db.execute(text(f"SELECT * FROM {table_name}")).fetchall()
+    
+    # Create HTML table
+    table_html = f"""
+    <!DOCTYPE html>
+    <html>
+    <head>
+        <title>Table: {table_name}</title>
+        <style>
+            body {{ font-family: Arial, sans-serif; margin: 20px; line-height: 1.6; }}
+            h1 {{ color: #333; }}
+            table {{ border-collapse: collapse; width: 100%; }}
+            th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+            th {{ background-color: #f2f2f2; }}
+            tr:nth-child(even) {{ background-color: #f9f9f9; }}
+            .back-link {{ margin-bottom: 20px; }}
+            .back-link a {{ 
+                display: inline-block;
+                padding: 8px 15px;
+                background-color: #f0f0f0;
+                color: #333;
+                text-decoration: none;
+                border-radius: 4px;
+            }}
+            .back-link a:hover {{ background-color: #ddd; }}
+        </style>
+    </head>
+    <body>
+        <div class="back-link">
+            <a href="/dbview">Back to Tables</a>
+        </div>
+        <h1>Table: {table_name}</h1>
+        <table>
+            <tr>
+    """
+    
+    # Add table headers
+    for column in columns:
+        table_html += f"<th>{column}</th>"
+    
+    table_html += "</tr>"
+    
+    # Add table rows
+    for row in result:
+        table_html += "<tr>"
+        for cell in row:
+            table_html += f"<td>{str(cell)}</td>"
+        table_html += "</tr>"
+    
+    table_html += """
+        </table>
+    </body>
+    </html>
+    """
+    return HTMLResponse(content=table_html)
 
 
 class QuestionResponse(BaseModel):
