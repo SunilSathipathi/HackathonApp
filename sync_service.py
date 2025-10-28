@@ -532,24 +532,75 @@ class SyncService:
             
             for skill_data in skills_data:
                 try:
-                    skill_id = skill_data.get("SkillID", "").strip()
+                    # Map IDs and names from Mendix payload
+                    raw_skill_id = skill_data.get("SkillID")
+                    skill_id = str(raw_skill_id).strip() if raw_skill_id is not None else ""
                     if not skill_id:
                         continue
                     
                     skill = self.db.query(Skill).filter(Skill.skill_id == skill_id).first()
                     
                     if skill:
-                        skill.name = skill_data.get("Name", "")
+                        skill.name = skill_data.get("SkillName") or skill_data.get("Name", "")
                         skill.category = skill_data.get("Category", "")
                         skill.description = skill_data.get("Description", "")
+                        # Parse and update created/changed dates if provided
+                        try:
+                            if skill_data.get("createdDate"):
+                                skill.created_date = datetime.fromisoformat(str(skill_data["createdDate"]).replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                        try:
+                            if skill_data.get("changedDate"):
+                                skill.changed_date = datetime.fromisoformat(str(skill_data["changedDate"]).replace("Z", "+00:00"))
+                        except Exception:
+                            pass
                     else:
                         skill = Skill(
                             skill_id=skill_id,
-                            name=skill_data.get("Name", ""),
+                            name=skill_data.get("SkillName") or skill_data.get("Name", ""),
                             category=skill_data.get("Category", ""),
                             description=skill_data.get("Description", "")
                         )
+                        # Parse and set created/changed dates if provided
+                        try:
+                            if skill_data.get("createdDate"):
+                                skill.created_date = datetime.fromisoformat(str(skill_data["createdDate"]).replace("Z", "+00:00"))
+                        except Exception:
+                            pass
+                        try:
+                            if skill_data.get("changedDate"):
+                                skill.changed_date = datetime.fromisoformat(str(skill_data["changedDate"]).replace("Z", "+00:00"))
+                        except Exception:
+                            pass
                         self.db.add(skill)
+                    
+                    # Many-to-many: create EmployeeSkill relations from Employees list
+                    employees = skill_data.get("Employees") or []
+                    for emp in employees:
+                        emp_id = (emp.get("EmployeeID") or "").strip()
+                        if not emp_id:
+                            continue
+                        # Ensure employee exists
+                        employee = self.db.query(Employee).filter(Employee.employee_id == emp_id).first()
+                        if not employee:
+                            logger.warning(f"Employee '{emp_id}' not found for skill '{skill_id}'")
+                            continue
+                        # Check if relation already exists
+                        existing_rel = (
+                            self.db.query(EmployeeSkill)
+                            .filter(
+                                EmployeeSkill.employee_id == emp_id,
+                                EmployeeSkill.skill_id == skill_id,
+                            )
+                            .first()
+                        )
+                        if not existing_rel:
+                            rel = EmployeeSkill(
+                                employee_id=emp_id,
+                                skill_id=skill_id,
+                            )
+                            self.db.add(rel)
                     
                     records_synced += 1
                     
