@@ -235,11 +235,40 @@ Employee-Skill Relationship:
                 ]
             
             elif query_type == "get_team_members":
-                manager_id = parameters.get("manager_id")
-                team = self.db.query(Employee).filter(
-                    Employee.manager_employee_id == manager_id
-                ).all()
-                
+                manager_id = parameters.get("manager_id") or parameters.get("manager_employee_id")
+                team: List[Employee] = []
+
+                if manager_id:
+                    if str(manager_id).strip().upper().startswith("LCL"):
+                        team = self.db.query(Employee).filter(
+                            Employee.manager_employee_id == manager_id
+                        ).all()
+                    else:
+                        candidates = self.db.query(Employee).filter(
+                            Employee.full_name.ilike(f"%{manager_id}%")
+                        ).all()
+                        candidate_ids = [c.employee_id for c in candidates]
+                        if candidate_ids:
+                            team = self.db.query(Employee).filter(
+                                Employee.manager_employee_id.in_(candidate_ids)
+                            ).all()
+                else:
+                    manager_name = (
+                        parameters.get("manager_name")
+                        or parameters.get("name")
+                        or parameters.get("manager")
+                        or parameters.get("manager_full_name")
+                    )
+                    if manager_name:
+                        candidates = self.db.query(Employee).filter(
+                            Employee.full_name.ilike(f"%{manager_name}%")
+                        ).all()
+                        candidate_ids = [c.employee_id for c in candidates]
+                        if candidate_ids:
+                            team = self.db.query(Employee).filter(
+                                Employee.manager_employee_id.in_(candidate_ids)
+                            ).all()
+
                 return [
                     {
                         "employee_id": emp.employee_id,
