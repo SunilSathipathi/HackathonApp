@@ -354,30 +354,46 @@ async def root():
     }
 
 
-@app.post("/api/ask", response_model=QuestionResponse, tags=["AI Query"])
+@app.post("/api/ask", response_model=QuestionResponse, tags=["AI Query"]) 
 async def ask_question(request: QuestionRequest, db: Session = Depends(get_db)):
     """
     Ask a question about employee data using natural language.
-    
-    This endpoint uses OpenAI to understand your question and query the database
-    to provide intelligent answers about employees, goals, projects, and skills.
-    
-    Example questions:
-    - "How many employees work as Mendix Developers?"
-    - "Who are all the Senior Delivery Managers?"
-    - "What are the pending goals for employee LCL16110165?"
-    - "List all active projects"
-    - "Which employees report to manager LCL16110001?"
-    - "Show me employees with blocked accounts"
+
+    This endpoint now routes through the Dynamic SQL/semantic engine to keep
+    behavior identical to the UI (/ask) and /query endpoint.
     """
     try:
         logger.info(f"Received question: {request.question}")
-        
-        ai_service = AIQueryService(db)
-        result = ai_service.answer_question(request.question)
-        
-        return QuestionResponse(**result)
-        
+
+        # Use the dynamic engine for consistent behavior with /query
+        ai = DynamicAIQueryService(db)
+        dyn = ai.answer(request.question)
+
+        # Build a small transparency hint based on how the manager was matched.
+        hint = ""
+        sql = (dyn.get("query_used") or "").lower()
+        if dyn.get("query_type") == "sql" and sql:
+            if "full_name like" in sql or "ilike" in sql:
+                hint = "Hint: matched manager by name (LIKE/ILIKE)."
+            elif "employee_id =" in sql:
+                hint = "Hint: matched manager by employee ID."
+
+        answer = dyn.get("answer") or ""
+        if hint:
+            answer = f"{answer}\n\n{hint}" if answer else hint
+
+        data_preview = dyn.get("data_preview") or []
+        qresp = {
+            "success": dyn.get("success", False),
+            "question": request.question,
+            "answer": answer,
+            "query_type": dyn.get("query_type"),
+            "data_points": len(data_preview),
+            "raw_data": data_preview if len(data_preview) <= 10 else data_preview[:10],
+            "error": dyn.get("error"),
+        }
+        return QuestionResponse(**qresp)
+
     except Exception as e:
         logger.error(f"Error processing question: {str(e)}")
         raise HTTPException(
