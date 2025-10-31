@@ -15,6 +15,7 @@ from config import settings
 from models import Employee, Department, Goal, Project, Skill, AIQueryLog
 from database import engine
 from vector_engine import VectorEngine
+from offline_queries import OfflineQueryService
 from query_router import QueryRouter
 
 logger = logging.getLogger(__name__)
@@ -856,66 +857,72 @@ class DynamicAIQueryService:
             self.db.rollback()
 
     def answer(self, question: str) -> Dict[str, Any]:
-        schema = self._schema_introspection()
-        schema_summary = self._schema_summary(schema)
-        route = self.router.classify(question, schema_summary)
-        qtype = route.get("type", "sql")
+        try:
+            schema = self._schema_introspection()
+            schema_summary = self._schema_summary(schema)
+            route = self.router.classify(question, schema_summary)
+            qtype = route.get("type", "sql")
 
-        sql_rows: List[Dict[str, Any]] = []
-        semantic_docs: List[Dict[str, Any]] = []
-        sql_text_used: Optional[str] = None
-        sql_params_used: Optional[Dict[str, Any]] = None
+            sql_rows: List[Dict[str, Any]] = []
+            semantic_docs: List[Dict[str, Any]] = []
+            sql_text_used: Optional[str] = None
+            sql_params_used: Optional[Dict[str, Any]] = None
 
-        if qtype in ("sql", "hybrid"):
-            gen = self._generate_sql(question, schema_summary)
-            sql_text_used = self._ensure_case_insensitive_like(gen.get("sql", ""))
-            sql_params_used = self._ensure_like_wildcards(sql_text_used, gen.get("parameters", {}))
-            sql_rows, sql_err = self._try_execute_sql(sql_text_used, sql_params_used)
-            if sql_err:
-                # Re-generate with error feedback and try once more
-                fixed = self._regenerate_sql_with_feedback(question, schema_summary, sql_text_used, sql_err)
-                sql_text_used = self._ensure_case_insensitive_like(fixed.get("sql", sql_text_used))
-                sql_params_used = self._ensure_like_wildcards(sql_text_used, fixed.get("parameters", sql_params_used))
-                sql_rows, sql_err2 = self._try_execute_sql(sql_text_used, sql_params_used)
-                if sql_err2:
-                    logging.error(f"SQL still failing after regeneration: {sql_err2}")
+            if qtype in ("sql", "hybrid"):
+                gen = self._generate_sql(question, schema_summary)
+                sql_text_used = self._ensure_case_insensitive_like(gen.get("sql", ""))
+                sql_params_used = self._ensure_like_wildcards(sql_text_used, gen.get("parameters", {}))
+                sql_rows, sql_err = self._try_execute_sql(sql_text_used, sql_params_used)
+                if sql_err:
+                    # Re-generate with error feedback and try once more
+                    fixed = self._regenerate_sql_with_feedback(question, schema_summary, sql_text_used, sql_err)
+                    sql_text_used = self._ensure_case_insensitive_like(fixed.get("sql", sql_text_used))
+                    sql_params_used = self._ensure_like_wildcards(sql_text_used, fixed.get("parameters", sql_params_used))
+                    sql_rows, sql_err2 = self._try_execute_sql(sql_text_used, sql_params_used)
+                    if sql_err2:
+                        logging.error(f"SQL still failing after regeneration: {sql_err2}")
 
-        if settings.enable_vector_search and qtype in ("semantic", "hybrid"):
-            try:
-                # Lazy-build embeddings if collection exists but is empty
-                if self.vectors.enabled:
-                    self.vectors.upsert_all(self.db)
-                semantic_docs = self.vectors.search(question, top_k=10)
-            except Exception as e:
-                logging.error(f"Vector search error: {e}")
+            if settings.enable_vector_search and qtype in ("semantic", "hybrid"):
+                try:
+                    # Lazy-build embeddings if collection exists but is empty
+                    if self.vectors.enabled:
+                        self.vectors.upsert_all(self.db)
+                    semantic_docs = self.vectors.search(question, top_k=10)
+                except Exception as e:
+                    logging.error(f"Vector search error: {e}")
 
-        answer = self._compose_answer(question, sql_rows, semantic_docs)
-        # Improve clarity when reporting queries return no rows
-        if qtype in ("sql", "hybrid") and not sql_rows:
-            # Try SQL name check, then semantic vectors, then fuzzy resolver
-            fallback_msg = self._fallback_reporting_message(question, sql_text_used, sql_params_used)
-            if fallback_msg:
-                answer = fallback_msg
-            else:
-                # If basic fallback produced nothing, attempt semantic and fuzzy directly
-                mgr_param = (sql_params_used or {}).get("manager_name")
-                if mgr_param:
-                    semantic_msg = self._semantic_reports_fallback(mgr_param)
-                    if semantic_msg:
-                        answer = semantic_msg
-                    else:
-                        fuzzy_msg = self._fuzzy_reports_fallback(mgr_param)
-                        if fuzzy_msg:
-                            answer = fuzzy_msg
-        self._log(question, qtype, sql_text_used, sql_params_used, len(sql_rows) + len(semantic_docs), answer)
+            answer = self._compose_answer(question, sql_rows, semantic_docs)
+            # Improve clarity when reporting queries return no rows
+            if qtype in ("sql", "hybrid") and not sql_rows:
+                # Try SQL name check, then semantic vectors, then fuzzy resolver
+                fallback_msg = self._fallback_reporting_message(question, sql_text_used, sql_params_used)
+                if fallback_msg:
+                    answer = fallback_msg
+                else:
+                    # If basic fallback produced nothing, attempt semantic and fuzzy directly
+                    mgr_param = (sql_params_used or {}).get("manager_name")
+                    if mgr_param:
+                        semantic_msg = self._semantic_reports_fallback(mgr_param)
+                        if semantic_msg:
+                            answer = semantic_msg
+                        else:
+                            fuzzy_msg = self._fuzzy_reports_fallback(mgr_param)
+                            if fuzzy_msg:
+                                answer = fuzzy_msg
+            self._log(question, qtype, sql_text_used, sql_params_used, len(sql_rows) + len(semantic_docs), answer)
 
-        preview = sql_rows if sql_rows else semantic_docs
-        query_used = sql_text_used or ("vector_search:mendix" if semantic_docs else "")
-        return {
-            "success": True,
-            "question": question,
-            "answer": answer,
-            "query_type": qtype,
-            "query_used": query_used,
-            "data_preview": preview[:10] if isinstance(preview, list) else preview,
-        }
+            preview = sql_rows if sql_rows else semantic_docs
+            query_used = sql_text_used or ("vector_search:mendix" if semantic_docs else "")
+            return {
+                "success": True,
+                "question": question,
+                "answer": answer,
+                "query_type": qtype,
+                "query_used": query_used,
+                "data_preview": preview[:10] if isinstance(preview, list) else preview,
+            }
+        except Exception as e:
+            # On OpenAI quota errors or other failures, provide offline fallback
+            logging.error(f"Dynamic AI path failed, falling back to offline: {e}")
+            offline = OfflineQueryService(self.db)
+            return offline.answer(question)

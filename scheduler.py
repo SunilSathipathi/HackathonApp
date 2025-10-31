@@ -51,9 +51,20 @@ class DataSyncScheduler:
             self.is_running = True
             logger.info(f"Scheduler started - sync interval: {settings.sync_interval_minutes} minutes")
             
-            # Run initial sync immediately
-            logger.info("Running initial sync...")
-            self.sync_job()
+            # Schedule initial sync to run immediately in background (non-blocking)
+            try:
+                from apscheduler.triggers.date import DateTrigger
+                self.scheduler.add_job(
+                    func=self.sync_job,
+                    trigger=DateTrigger(run_date=datetime.utcnow()),
+                    id='initial_mendix_sync',
+                    name='Initial Mendix Employee Data Sync',
+                    replace_existing=True,
+                    max_instances=1
+                )
+                logger.info("Initial sync scheduled to run immediately")
+            except Exception as e:
+                logger.warning(f"Could not schedule initial sync: {e}")
             
         except Exception as e:
             logger.error(f"Error starting scheduler: {str(e)}")
