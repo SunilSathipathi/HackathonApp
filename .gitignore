@@ -23,3 +23,6 @@ employee_data.db
 Thumbs.db
 .vscode/
 .idea/
+ 
+# Chroma vector store (generated at runtime)
+vector_store/
